@@ -9,8 +9,8 @@ namespace WalletConnectSharpUnity
     {
         [SerializeField] private AuthScreen _authScreen;
         [SerializeField] private AccountScreen _accountScreen;
-        [SerializeField] private ErrorScreen _errorScreen;
-        
+        [SerializeField] private NotificationScreen _notificationScreen;
+
         private static Wallet Wallet => Wallet.Instance;
 
         private async void Start()
@@ -24,15 +24,22 @@ namespace WalletConnectSharpUnity
             if (await Task.WhenAny(initTask, Task.Delay(timeout)) == initTask)
                 await initTask;
             else
-                _errorScreen.Show("Initialization timed out.");
+                _notificationScreen.Show("Initialization timed out.");
         }
-        
+
+        public async void ClearStorage()
+        {
+            await Wallet.Instance.Client.Options.Storage.Clear();
+            Debug.Log("Storage cleared", this);
+        }
+
         private async void OnAuthRequired(string uri)
         {
             try
             {
+                _accountScreen.Hide();
                 _authScreen.Show(uri);
-                await Wallet.Authenticate();
+                await Wallet.AuthenticateAsync();
             }
             catch (Exception e)
             {
@@ -43,17 +50,17 @@ namespace WalletConnectSharpUnity
                 _authScreen.Hide();
             }
         }
-        
+
         private void OnSessionChanged(SessionStruct session)
         {
             _authScreen.Hide();
             _accountScreen.Show(session);
         }
-        
+
         private void ShowError(string error)
         {
             Debug.LogError(error, this);
-            _errorScreen.Show(error);
+            _notificationScreen.Show(error);
         }
     }
 }

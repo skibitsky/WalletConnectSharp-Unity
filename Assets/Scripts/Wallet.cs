@@ -1,14 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using UnityEngine;
 using WalletConnectSharp.Common.Utils;
-using WalletConnectSharp.Core.Models.Pairing;
+using WalletConnectSharp.Core;
+using WalletConnectSharp.Core.Models.Pairing.Methods;
 using WalletConnectSharp.Network.Models;
 using WalletConnectSharp.Sign;
 using WalletConnectSharp.Sign.Models;
 using WalletConnectSharp.Sign.Models.Engine;
+using WalletConnectSharp.Storage;
+using WalletConnectSharp.Storage.Interfaces;
 
 namespace WalletConnectSharpUnity
 {
@@ -32,7 +37,7 @@ namespace WalletConnectSharpUnity
                     Name = "Unity Dapp",
                     Url = "https://walletconnect.com"
                 },
-                Storage = new PlayerPrefsStorage()
+                Storage = BuildStorage()
             };
 
             _connectOptions = new ConnectOptions
@@ -45,7 +50,6 @@ namespace WalletConnectSharpUnity
                             Methods = new[]
                             {
                                 "eth_sendTransaction",
-                                "eth_sign",
                                 "personal_sign",
                                 "eth_signTypedData"
                                 // These don't work in some wallets
@@ -87,25 +91,60 @@ namespace WalletConnectSharpUnity
         public async Task Init()
         {
             Client = await WalletConnectSignClient.Init(_clientOptions);
-            _connectedData = await Client.Connect(_connectOptions);
             var sessions = Client.Find(_connectOptions.RequiredNamespaces);
 
             if (sessions.Length > 0)
+            {
                 Session = sessions.First(x => x.Acknowledged ?? false);
+            }
             else
+            {
+                _connectedData = await Client.Connect(_connectOptions);
+                // TODO: refactor flow
                 AuthRequired?.Invoke(_connectedData.Uri);
+            }
         }
 
-        public async Task Authenticate()
+        private static IKeyValueStorage BuildStorage()
+        {
+            var path = Application.persistentDataPath + "/walletconnect.json";
+            Debug.Log("Using storage location: " + path);
+            return new FileSystemStorage(Application.persistentDataPath + "/walletconnect.json");
+        }
+
+        public async Task AuthenticateAsync()
         {
             Session = await _connectedData.Approval;
         }
 
-        public async Task<string> SendTransaction(Transaction transaction)
+        public async Task DisconnectAsync()
         {
+            await Client.Disconnect(Session.Topic, new PairingDelete());
+            _connectedData = await Client.Connect(_connectOptions);
+            AuthRequired?.Invoke(_connectedData.Uri);
+        }
+
+        public async Task<string> SendTransactionAsync(Transaction transaction)
+        {
+            Debug.Log("SendTransactionAsync");
+
             var request = new EthSendTransaction(transaction);
 
             var result = await Client.Request<EthSendTransaction, string>(Session.Topic, request);
+
+            return result;
+        }
+
+        public async Task<string> PersonalSignAsync(string message)
+        {
+            Debug.Log("PersonalSignAsync");
+
+            var account = GetCurrentAddress();
+
+            var hexUtf8 = "0x" + Encoding.UTF8.GetBytes(message).ToHex();
+            var request = new PersonalSign(hexUtf8, account.Address);
+
+            var result = await Client.Request<PersonalSign, string>(Session.Topic, request, account.ChainId);
 
             return result;
         }
@@ -139,6 +178,61 @@ namespace WalletConnectSharpUnity
             public EthSendTransaction(params Transaction[] transactions) : base(transactions)
             {
             }
+        }
+
+        [RpcMethod("personal_sign")]
+        [RpcRequestOptions(Clock.ONE_MINUTE, 99998)]
+        public class PersonalSign : List<string>
+        {
+            public PersonalSign(string hexUtf8, string account) : base(new[] { hexUtf8, account })
+            {
+            }
+
+            public PersonalSign()
+            {
+            }
+        }
+
+
+        public class Caip25Address
+        {
+            public string Address;
+            public string ChainId;
+        }
+
+        public Caip25Address GetCurrentAddress(string chain)
+        {
+            if (string.IsNullOrWhiteSpace(chain))
+                return null;
+
+            var defaultNamespace = Session.Namespaces[chain];
+
+            if (defaultNamespace.Accounts.Length == 0)
+                return null;
+
+            var fullAddress = defaultNamespace.Accounts[0];
+            var addressParts = fullAddress.Split(":");
+
+            var address = addressParts[2];
+            var chainId = string.Join(':', addressParts.Take(2));
+
+            return new Caip25Address()
+            {
+                Address = address,
+                ChainId = chainId
+            };
+        }
+
+        public Caip25Address GetCurrentAddress()
+        {
+            var currentSession = Client.Session.Get(Client.Session.Keys[0]);
+
+            var defaultChain = currentSession.Namespaces.Keys.FirstOrDefault();
+
+            if (string.IsNullOrWhiteSpace(defaultChain))
+                return null;
+
+            return GetCurrentAddress(defaultChain);
         }
     }
 }
