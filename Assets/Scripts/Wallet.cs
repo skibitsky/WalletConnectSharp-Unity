@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
+using WalletConnectSharp.Common.Logging;
 using WalletConnectSharp.Common.Utils;
 using WalletConnectSharp.Core;
 using WalletConnectSharp.Core.Models.Pairing.Methods;
@@ -90,6 +91,7 @@ namespace WalletConnectSharpUnity
 
         public async Task Init()
         {
+            WCLogger.Logger = new WCUnityLogger();
             Client = await WalletConnectSignClient.Init(_clientOptions);
             var sessions = Client.Find(_connectOptions.RequiredNamespaces);
 
